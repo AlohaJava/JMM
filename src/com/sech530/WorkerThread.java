@@ -28,7 +28,7 @@ class WorkerThread extends Thread {
                     try {
                         queue.wait();
                     } catch (InterruptedException interruptedException) {
-                        workerThreadListener.onTaskInterrupted(this);
+                        workerThreadListener.onTaskEvent(WorkerThreadEvent.INTERRUPTED);
                     }
                 }
                 task = queue.poll();
@@ -38,12 +38,12 @@ class WorkerThread extends Thread {
                 //System.out.println("Worker "+Thread.currentThread().getId()+" starting task!");
                 task.run();
             } catch (RuntimeException e) {
-                workerThreadListener.onTaskFailed(this);
+                workerThreadListener.onTaskEvent(WorkerThreadEvent.FAILED);
                 System.out.println("Error in runnable in thread: "+Thread.currentThread().getId());
             }
             finally {
                 //System.out.println("Worker "+Thread.currentThread().getId()+" ended task!");
-                workerThreadListener.onTaskComplited(this);
+                workerThreadListener.onTaskEvent(WorkerThreadEvent.COMPLITED);
             }
         }
 

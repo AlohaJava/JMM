@@ -4,19 +4,20 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 public class FixedThreadPool implements ThreadPool, WorkerThreadListener {
 
+    private final Object lock = new Object();
     private final WorkerThread[] workers;
     private final LinkedBlockingQueue<Runnable> queue;
-    private int size;
-    private final Object lock = new Object();
-    private int complitedTaskCount = 0;
-    private int failedTaskCount = 0;
-    private int interruptedTaskCount = 0;
-
+    private volatile int size;
+    private volatile int complitedTaskCount = 0;
+    private volatile int failedTaskCount = 0;
+    private volatile int interruptedTaskCount = 0;
+    private CountUpAndDownLatch tasksLatch;
     private Runnable callback;
-    private boolean callbackCalled=false;
+    private boolean callbackCalled = false;
+    private boolean isStarted = false;
 
     public FixedThreadPool(int size) {
-        queue = new LinkedBlockingQueue<Runnable>();
+        queue = new LinkedBlockingQueue<>();
         workers = new WorkerThread[size];
         this.size = size;
         for (int i = 0; i < size; i++) {
@@ -30,6 +31,8 @@ public class FixedThreadPool implements ThreadPool, WorkerThreadListener {
 
     @Override
     public void start(Runnable callback) {
+        isStarted = true;
+        tasksLatch = new CountUpAndDownLatch(queue.size());
         this.callback = callback;
         for (WorkerThread worker : workers) {
             worker.start();
@@ -39,6 +42,9 @@ public class FixedThreadPool implements ThreadPool, WorkerThreadListener {
     @Override
     public void execute(Runnable task) {
         synchronized (queue) {
+            if (isStarted) {
+                tasksLatch.countUp();
+            }
             queue.add(task);
             queue.notify();
         }
@@ -55,56 +61,66 @@ public class FixedThreadPool implements ThreadPool, WorkerThreadListener {
     }
 
     @Override
-    public void interrupt() {
-        synchronized (queue) {
-            interruptedTaskCount += queue.size();
-            queue.clear();
-        }
-    }
-
-    @Override
     public int getInterruptedTaskCount() {
         return interruptedTaskCount;
     }
 
     @Override
-    public boolean isFinished() {
-        for (WorkerThread worker : workers) {
-            if (worker.getState() == Thread.State.RUNNABLE || worker.getState() == Thread.State.TIMED_WAITING) {
-                return false;
-            }
+    public void interrupt() {
+        synchronized (queue) {
+            interruptedTaskCount += queue.size();
+            queue.clear();
+            queue.notifyAll();
         }
-        callEndTask();
-        return true;
     }
 
 
-    private void callEndTask(){
-        if(!callbackCalled){
-            callbackCalled=true;
+    @Override
+    public boolean isFinished() {
+        synchronized (lock) {
+            if (tasksLatch.getCount() == 0) {
+                callEndTask();
+                return true;
+            }
+            return false;
+        }
+    }
+
+
+    private synchronized void callEndTask() {
+        if (!callbackCalled) {
+            callbackCalled = true;
             callback.run();
         }
     }
 
-    @Override
-    public void onTaskComplited(Thread thread) {
-        synchronized (lock) {
-            complitedTaskCount++;
-        }
+
+    private void countDownAndCheckFinish() throws InterruptedException {
+        tasksLatch.countDownOrWaitIfZero();
+        isFinished();
     }
 
     @Override
-    public void onTaskFailed(Thread thread) {
+    public void onTaskEvent(WorkerThreadEvent event) {
         synchronized (lock) {
-            failedTaskCount++;
+            switch (event) {
+                case FAILED:
+                    ++failedTaskCount;
+                    break;
+                case COMPLITED:
+                    ++complitedTaskCount;
+                    break;
+                case INTERRUPTED:
+                    ++interruptedTaskCount;
+                    break;
+                default:
+                    System.out.println("NOT Implemented event:" + event + " in FixedThredPool.class");
+            }
+            try {
+                countDownAndCheckFinish();
+            } catch (InterruptedException interruptedException) {
+                interruptedException.printStackTrace();
+            }
         }
     }
-
-    @Override
-    public void onTaskInterrupted(Thread thread) {
-        synchronized (lock) {
-            interruptedTaskCount++;
-        }
-    }
-
 }
