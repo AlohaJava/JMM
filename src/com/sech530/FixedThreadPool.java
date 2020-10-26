@@ -86,6 +86,9 @@ public class FixedThreadPool implements ThreadPool, WorkerThreadListener {
         }
     }
 
+    public void waitForComplite() throws InterruptedException {
+        tasksLatch.waitUntilZero();
+    }
 
     private synchronized void callEndTask() {
         if (!callbackCalled) {
